@@ -1,4 +1,5 @@
 from unittest.mock import MagicMock, patch
+from uuid import NAMESPACE_URL, uuid5
 
 import pytest
 from railtracks.retrieval.loaders.pdf_loader import PyPDFLoader
@@ -277,3 +278,46 @@ class TestPyPDFLoaderDirectory:
                 str(tmp_path), breakdown_strategy="document"
             ).aload()
         assert len(docs) == 1
+
+
+class TestPyPDFLoaderDocumentIds:
+    """Each page or paragraph gets its own stable id; the source stays the file."""
+
+    async def _load(self, tmp_path, page_texts, strategy):
+        pdf = tmp_path / "doc.pdf"
+        pdf.touch()
+        with patch(
+            "railtracks.retrieval.loaders.pdf_loader.PdfReader",
+            return_value=_make_reader(page_texts),
+        ):
+            docs = await PyPDFLoader(str(pdf), breakdown_strategy=strategy).aload()
+        return str(pdf), docs
+
+    async def test_page_ids_are_distinct_and_derived_from_page(self, tmp_path):
+        """Page documents share a source but get ids from `source#page=n`."""
+        source, docs = await self._load(tmp_path, ["p1", "", "p3"], "page")
+        assert {d.source for d in docs} == {source}
+        assert [d.id for d in docs] == [
+            uuid5(NAMESPACE_URL, f"{source}#page=1"),
+            uuid5(NAMESPACE_URL, f"{source}#page=3"),
+        ]
+
+    async def test_paragraph_ids_are_distinct_and_derived_from_position(self, tmp_path):
+        """Paragraph ids come from `source#page=n&paragraph=m`."""
+        source, docs = await self._load(tmp_path, ["a\n\nb", "c"], "paragraph")
+        assert [d.id for d in docs] == [
+            uuid5(NAMESPACE_URL, f"{source}#page=1&paragraph=1"),
+            uuid5(NAMESPACE_URL, f"{source}#page=1&paragraph=2"),
+            uuid5(NAMESPACE_URL, f"{source}#page=2&paragraph=1"),
+        ]
+
+    async def test_ids_are_stable_across_loads(self, tmp_path):
+        """Loading the same PDF twice yields the same ids, so re-ingest upserts."""
+        _, first = await self._load(tmp_path, ["p1", "p2"], "page")
+        _, second = await self._load(tmp_path, ["p1", "p2"], "page")
+        assert [d.id for d in first] == [d.id for d in second]
+
+    async def test_document_strategy_keeps_source_derived_id(self, tmp_path):
+        """The single whole-PDF document keeps the default id from its source."""
+        source, (doc,) = await self._load(tmp_path, ["p1", "p2"], "document")
+        assert doc.id == uuid5(NAMESPACE_URL, source)

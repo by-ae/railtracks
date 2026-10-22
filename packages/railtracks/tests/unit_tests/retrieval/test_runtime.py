@@ -9,6 +9,7 @@ inject failures.
 from __future__ import annotations
 
 from collections.abc import AsyncGenerator
+from unittest.mock import MagicMock, patch
 from uuid import uuid4
 
 import pytest
@@ -25,6 +26,7 @@ from railtracks.retrieval.chunking.base import Chunker
 from railtracks.retrieval.embedding.base import Embedding
 from railtracks.retrieval.embedding.models import EmbeddingMetrics, TextEmbeddings
 from railtracks.retrieval.loaders.base import BaseDocumentLoader
+from railtracks.retrieval.loaders.pdf_loader import PyPDFLoader
 from railtracks.retrieval.loaders.sanitizing import (
     Sanitizer,
     SanitizingLoader,
@@ -169,6 +171,28 @@ async def test_reingest_replaces_prior_version():
     found = await store.find({"document_id": str(doc_id)}, limit=10)
     assert len(found) == 3
     assert {e.content for e in found} == {"only", "two", "words"}
+
+
+async def test_ingest_keeps_every_pdf_page(tmp_path):
+    """Pages of one PDF share a source but must not overwrite each other."""
+    pdf = tmp_path / "doc.pdf"
+    pdf.touch()
+    pages = []
+    for text in ["first", "second", "third"]:
+        page = MagicMock()
+        page.extract_text.return_value = text
+        pages.append(page)
+    runtime, store, _ = _runtime()
+
+    with patch(
+        "railtracks.retrieval.loaders.pdf_loader.PdfReader",
+        return_value=MagicMock(pages=pages),
+    ):
+        async for _ in runtime.ingest(PyPDFLoader(str(pdf))):
+            pass
+
+    found = await store.find({}, limit=10)
+    assert {e.content for e in found} == {"first", "second", "third"}
 
 
 async def test_delete_where_called_before_first_write_only():

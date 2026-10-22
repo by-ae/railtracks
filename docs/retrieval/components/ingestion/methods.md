@@ -149,10 +149,7 @@ pip install "railtracks[pdf]"
 
 ### Breakdown strategy
 
-`"page"` (the default) emits one Document per page. Page numbers end up
-in metadata, citations become trivial, and the chunker decides
-per-page rather than across a 200-page file. **Use page strategy for
-retrieval.**
+`"page"` (the default) emits one Document per page. Page numbers end up in metadata, citations become trivial, and the chunker decides per-page rather than across a 200-page file. Every page keeps the file as its `source` but gets its own document id (derived from `<source>#page=<n>`, or `#page=<n>&paragraph=<m>` for `"paragraph"`), so re-ingesting a PDF updates each page in place. **Use page strategy for retrieval.**
 
 ```python
 --8<-- "docs/scripts/retrieval/ingestion_example.py:pdf_page_strategy"

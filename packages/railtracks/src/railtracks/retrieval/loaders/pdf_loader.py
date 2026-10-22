@@ -5,6 +5,7 @@ import io
 from collections.abc import AsyncGenerator, Mapping
 from pathlib import Path
 from typing import Any, Literal
+from uuid import NAMESPACE_URL, uuid5
 
 from railtracks.retrieval.loaders._pdf_options import (
     BreakdownStrategy,
@@ -36,6 +37,13 @@ async def stream_pdf(
     PDF for the `document` strategy. See `PyPDFLoader` for the metadata each
     strategy adds.
 
+    Every `Document` from one PDF shares `source`, so page and paragraph
+    documents get their own stable id, derived via UUID5 from
+    `{source}#page={n}` or `{source}#page={n}&paragraph={m}`. Without it the
+    runtime's upsert would treat every page as the same document and keep
+    only the last one. The `document` strategy keeps the default id derived
+    from `source`.
+
     Args:
         pdf: Path to the PDF file, or the PDF's raw bytes.
         source: Value for each `Document.source`.
@@ -53,7 +61,7 @@ async def stream_pdf(
     base_metadata = dict(metadata or {})
 
     def make_document(content: str, **position: int) -> Document:
-        return Document(
+        document = Document(
             content=content,
             type=DocumentType.PDF,
             source=source,
@@ -64,6 +72,10 @@ async def stream_pdf(
                 "file_type": ".pdf",
             },
         )
+        if position:
+            fragment = "&".join(f"{key}={value}" for key, value in position.items())
+            document.id = uuid5(NAMESPACE_URL, f"{source}#{fragment}")
+        return document
 
     if breakdown_strategy == "document":
         page_texts = [
@@ -106,6 +118,10 @@ class PyPDFLoader(BaseDocumentLoader):
       `file_type`.
     - `document`: entire PDF as one `Document`, with pages joined by ``\\n\\n``.
       `metadata` includes `total_pages` and `file_type`.
+
+    `Document.source` is always the file path. Page and paragraph documents
+    each get their own stable id, so re-ingesting a PDF replaces each page
+    rather than letting pages overwrite one another; see `stream_pdf`.
 
     Requires: ``pip install "railtracks[pdf]"``
 
